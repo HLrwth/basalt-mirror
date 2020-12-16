@@ -146,6 +146,9 @@ struct OpticalFlowPatch {
       }
     }
 
+    if(sum<std::numeric_limits<Scalar>::epsilon())
+      return false;
+
     int num_residuals = 0;
 
     for (int i = 0; i < PATTERN_SIZE; i++) {

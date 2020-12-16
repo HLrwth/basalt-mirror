@@ -1,0 +1,34 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "",
+        "limitSymbolsToIncludedHeaders": true
+      },
+      "includePath": [
+        "/home/ev/ros_deps_ws/devel/include/**",
+        "/opt/ros/melodic/include/**",
+        "/home/ev/ros_deps_ws/src/basalt_ros1/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/roscpp_core/cpp_common/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/apriltag/ethz_apriltag2/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/ros_comm/utilities/message_filters/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/opengv/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/Pangolin/include/**",
+        "/home/ev/ros_deps_ws/src/realsense-ros/realsense2_camera/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/ros_comm/tools/rosbag/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/ros_comm/tools/rosbag_storage/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/ros_comm/tools/rosconsole/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/ros_comm/clients/roscpp/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/roscpp_core/roscpp_serialization/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/roscpp_core/roscpp_traits/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/ros_comm/utilities/roslz4/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/ros_comm/tools/rostest/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/roscpp_core/rostime/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/ros_comm/tools/topic_tools/include/**",
+        "/home/ev/ros_deps_ws/src/basalt-mirror/thirdparty/ros/ros_comm/utilities/xmlrpcpp/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS"
+    }
+  ]
+}
