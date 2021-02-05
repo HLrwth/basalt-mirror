@@ -232,7 +232,7 @@ void KeypointVioEstimator::addVisionToQueue(
 
 bool KeypointVioEstimator::measure(const OpticalFlowResult::Ptr& opt_flow_meas,
                                    const IntegratedImuMeasurement::Ptr& meas) {
-  if (meas.get()) {
+  if (meas.get()) { //after first frame
     BASALT_ASSERT(frame_states[last_state_t_ns].getState().t_ns ==
                   meas->get_start_t_ns());
     BASALT_ASSERT(opt_flow_meas->t_ns ==
@@ -246,7 +246,7 @@ bool KeypointVioEstimator::measure(const OpticalFlowResult::Ptr& opt_flow_meas,
     last_state_t_ns = opt_flow_meas->t_ns;
     next_state.t_ns = opt_flow_meas->t_ns;
 
-    frame_states[last_state_t_ns] = next_state;
+    frame_states[last_state_t_ns] = next_state;//prediction of cur_frame
 
     imu_meas[meas->get_start_t_ns()] = *meas;
   }

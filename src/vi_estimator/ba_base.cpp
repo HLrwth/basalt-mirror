@@ -152,7 +152,7 @@ void BundleAdjustmentBase::computeError(
 
         std::visit(
             [&](const auto& cam) {
-              for (size_t i = 0; i < obs_kv.second.size(); i++) {
+              for (size_t i = 0; i < obs_kv.second.size(); i++) {//loop over 2d obs in target 
                 const KeypointObservation& kpt_obs = obs_kv.second[i];
                 const KeypointPosition& kpt_pos =
                     lmdb.getLandmark(kpt_obs.kpt_id);
@@ -245,18 +245,18 @@ void BundleAdjustmentBase::linearizeHelper(
 
   tbb::parallel_for(
       tbb::blocked_range<size_t>(0, obs_tcid_vec.size()),
-      [&](const tbb::blocked_range<size_t>& range) {
+      [&](const tbb::blocked_range<size_t>& range) {//range over host frames
         for (size_t r = range.begin(); r != range.end(); ++r) {
-          auto kv = obs_to_lin.find(obs_tcid_vec[r]);
+          auto kv = obs_to_lin.find(obs_tcid_vec[r]);  //iterator to obs of kf
 
-          RelLinData& rld = rld_vec[r];
+          RelLinData& rld = rld_vec[r];  //vector of RelLinData
 
           rld.error = 0;
 
-          const TimeCamId& tcid_h = kv->first;
+          const TimeCamId& tcid_h = kv->first; //host id
 
           for (const auto& obs_kv : kv->second) {
-            const TimeCamId& tcid_t = obs_kv.first;
+            const TimeCamId& tcid_t = obs_kv.first; //target id
             if (tcid_h != tcid_t) {
               // target and host are not the same
               rld.order.emplace_back(std::make_pair(tcid_h, tcid_t));

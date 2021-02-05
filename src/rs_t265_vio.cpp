@@ -104,7 +104,7 @@ Eigen::aligned_vector<Eigen::Vector3d> vio_t_w_i;
 
 std::string marg_data_path;
 
-std::mutex m;
+//std::mutex m;
 bool step_by_step = false;
 int64_t curr_t_ns = -1;
 
