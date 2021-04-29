@@ -40,6 +40,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <Eigen/Dense>
 #include <sophus/se3.hpp>
 
+#include <basalt/dynamics/velocity_kinematics.h>
 #include <basalt/imu/preintegration.h>
 #include <basalt/io/dataset_io.h>
 #include <basalt/utils/assert.h>
@@ -65,11 +66,16 @@ class KeypointVioEstimator : public VioEstimatorBase,
 
   KeypointVioEstimator(const Eigen::Vector3d& g,
                        const basalt::Calibration<double>& calib,
-                       const VioConfig& config);
+                       const VioConfig& config,
+                       bool use_vel = false);
+
+  // void initialize(int64_t t_ns, const Sophus::SE3d& T_w_i,
+  //                 const Eigen::Vector3d& vel_w_i, const Eigen::Vector3d& bg,
+  //                 const Eigen::Vector3d& ba);
 
   void initialize(int64_t t_ns, const Sophus::SE3d& T_w_i,
-                  const Eigen::Vector3d& vel_w_i, const Eigen::Vector3d& bg,
-                  const Eigen::Vector3d& ba);
+                const Eigen::Vector3d& vel_w_i, const Eigen::Vector3d& bg,
+                const Eigen::Vector3d& ba,const Sophus::SE3d& T_o_i, double t_extr_ms);
 
   void initialize(const Eigen::Vector3d& bg, const Eigen::Vector3d& ba);
 
@@ -79,23 +85,53 @@ class KeypointVioEstimator : public VioEstimatorBase,
   void addVisionToQueue(const OpticalFlowResult::Ptr& data);
 
   bool measure(const OpticalFlowResult::Ptr& data,
-               const IntegratedImuMeasurement::Ptr& meas);
+               const IntegratedImuMeasurement::Ptr& meas,
+               const VelocityInverseKinematics::Ptr& kinematics);
+
+  // static void linearizeAbsIMU(
+  //     const AbsOrderMap& aom, Eigen::MatrixXd& abs_H, Eigen::VectorXd& abs_b,
+  //     double& imu_error, double& bg_error, double& ba_error,
+  //     const Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin>& states,
+  //     const Eigen::aligned_map<int64_t, IntegratedImuMeasurement>& imu_meas,
+  //     const Eigen::Vector3d& gyro_bias_weight,
+  //     const Eigen::Vector3d& accel_bias_weight, const Eigen::Vector3d& g);
+
+  // static void computeImuError(
+  //     const AbsOrderMap& aom, double& imu_error, double& bg_error,
+  //     double& ba_error,
+  //     const Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin>& states,
+  //     const Eigen::aligned_map<int64_t, IntegratedImuMeasurement>& imu_meas,
+  //     const Eigen::Vector3d& gyro_bias_weight,
+  //     const Eigen::Vector3d& accel_bias_weight, const Eigen::Vector3d& g);
 
   static void linearizeAbsIMU(
-      const AbsOrderMap& aom, Eigen::MatrixXd& abs_H, Eigen::VectorXd& abs_b,
-      double& imu_error, double& bg_error, double& ba_error,
-      const Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin>& states,
-      const Eigen::aligned_map<int64_t, IntegratedImuMeasurement>& imu_meas,
-      const Eigen::Vector3d& gyro_bias_weight,
-      const Eigen::Vector3d& accel_bias_weight, const Eigen::Vector3d& g);
+    const AbsOrderMap& aom, Eigen::MatrixXd& abs_H, Eigen::VectorXd& abs_b,
+    double& imu_error, double& bg_error, double& ba_error,
+    const Eigen::aligned_map<int64_t, PoseVelBiasExtrStateWithLin>& states,
+    const Eigen::aligned_map<int64_t, IntegratedImuMeasurement>& imu_meas,
+    const Eigen::Vector3d& gyro_bias_weight,
+    const Eigen::Vector3d& accel_bias_weight, const Eigen::Vector3d& g);
 
   static void computeImuError(
       const AbsOrderMap& aom, double& imu_error, double& bg_error,
       double& ba_error,
-      const Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin>& states,
+      const Eigen::aligned_map<int64_t, PoseVelBiasExtrStateWithLin>& states,
       const Eigen::aligned_map<int64_t, IntegratedImuMeasurement>& imu_meas,
       const Eigen::Vector3d& gyro_bias_weight,
       const Eigen::Vector3d& accel_bias_weight, const Eigen::Vector3d& g);
+
+  static void linearizeKinematics(
+      const AbsOrderMap& aom,Eigen::MatrixXd& abs_H, Eigen::VectorXd& abs_b,
+      double& kin_error, double& extr_error, double& extr_dt_error,
+      const Eigen::aligned_map<int64_t, PoseVelBiasExtrStateWithLin>& frame_states,
+      const Eigen::aligned_map<int64_t, VelocityInverseKinematics>& kin_meas , 
+      const double& camera_cmd_timeoffset_weight, const double& camera_base_extr_weight);
+
+  static void computeKinematicsError(
+      const AbsOrderMap& aom,double& kin_error, double& extr_error, double& extr_dt_error,
+      const Eigen::aligned_map<int64_t, PoseVelBiasExtrStateWithLin>& frame_states,
+      const Eigen::aligned_map<int64_t, VelocityInverseKinematics>& kin_meas,
+      const double& camera_cmd_timeoffset_weight, const double& camera_base_extr_weight);
 
   // int64_t propagate();
   // void addNewState(int64_t data_t_ns);
@@ -116,11 +152,11 @@ class KeypointVioEstimator : public VioEstimatorBase,
     return frame_states.at(last_state_t_ns).getState().vel_w_i;
   }
 
-  const PoseVelBiasState& get_state() const {
+  const PoseVelBiasExtrState& get_state() const {
     return frame_states.at(last_state_t_ns).getState();
   }
-  PoseVelBiasState get_state(int64_t t_ns) const {
-    PoseVelBiasState state;
+  PoseVelBiasExtrState get_state(int64_t t_ns) const {
+    PoseVelBiasExtrState state;
 
     auto it = frame_states.find(t_ns);
 
@@ -182,12 +218,15 @@ class KeypointVioEstimator : public VioEstimatorBase,
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
  private:
+  bool use_vel;
+
   bool take_kf;
   int frames_after_kf;
   std::set<int64_t> kf_ids;
 
   int64_t last_state_t_ns;
   Eigen::aligned_map<int64_t, IntegratedImuMeasurement> imu_meas;
+  Eigen::aligned_map<int64_t, VelocityInverseKinematics> kin_meas;
 
   const Eigen::Vector3d g;
 
@@ -203,6 +242,8 @@ class KeypointVioEstimator : public VioEstimatorBase,
   Eigen::VectorXd marg_b;
 
   Eigen::Vector3d gyro_bias_weight, accel_bias_weight;
+
+  double camera_cmd_timeoffset_weight, camera_base_extr_weight;
 
   size_t max_states;
   size_t max_kfs;

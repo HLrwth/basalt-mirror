@@ -40,7 +40,7 @@ namespace basalt {
 void KeypointVioEstimator::linearizeAbsIMU(
     const AbsOrderMap& aom, Eigen::MatrixXd& abs_H, Eigen::VectorXd& abs_b,
     double& imu_error, double& bg_error, double& ba_error,
-    const Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin>& states,
+    const Eigen::aligned_map<int64_t, PoseVelBiasExtrStateWithLin>& states,
     const Eigen::aligned_map<int64_t, IntegratedImuMeasurement>& imu_meas,
     const Eigen::Vector3d& gyro_bias_weight,
     const Eigen::Vector3d& accel_bias_weight, const Eigen::Vector3d& g) {
@@ -59,8 +59,8 @@ void KeypointVioEstimator::linearizeAbsIMU(
       const size_t start_idx = aom.abs_order_map.at(start_t).first;
       const size_t end_idx = aom.abs_order_map.at(end_t).first;
 
-      PoseVelBiasStateWithLin start_state = states.at(start_t);
-      PoseVelBiasStateWithLin end_state = states.at(end_t);
+      PoseVelBiasExtrStateWithLin start_state = states.at(start_t);
+      PoseVelBiasExtrStateWithLin end_state = states.at(end_t);
 
       IntegratedImuMeasurement::MatNN d_res_d_start, d_res_d_end;
       IntegratedImuMeasurement::MatN3 d_res_d_bg, d_res_d_ba;
@@ -179,7 +179,7 @@ void KeypointVioEstimator::linearizeAbsIMU(
 void KeypointVioEstimator::computeImuError(
     const AbsOrderMap& aom, double& imu_error, double& bg_error,
     double& ba_error,
-    const Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin>& states,
+    const Eigen::aligned_map<int64_t, PoseVelBiasExtrStateWithLin>& states,
     const Eigen::aligned_map<int64_t, IntegratedImuMeasurement>& imu_meas,
     const Eigen::Vector3d& gyro_bias_weight,
     const Eigen::Vector3d& accel_bias_weight, const Eigen::Vector3d& g) {
@@ -195,8 +195,8 @@ void KeypointVioEstimator::computeImuError(
           aom.abs_order_map.count(end_t) == 0)
         continue;
 
-      PoseVelBiasStateWithLin start_state = states.at(start_t);
-      PoseVelBiasStateWithLin end_state = states.at(end_t);
+      PoseVelBiasExtrStateWithLin start_state = states.at(start_t);
+      PoseVelBiasExtrStateWithLin end_state = states.at(end_t);
 
       const PoseVelState::VecN res = kv.second.residual(
           start_state.getState(), g, end_state.getState(),

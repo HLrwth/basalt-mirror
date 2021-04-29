@@ -94,6 +94,13 @@ VioConfig::VioConfig() {
   mapper_use_lm = false;
   mapper_lm_lambda_min = 1e-32;
   mapper_lm_lambda_max = 1e2;
+
+  camera_cmd_timeoffset = 0.05;
+  camera_cmd_timeoffset_init_weight = 10;
+  camera_cmd_timeoffset_std = 0.1;
+
+  camera_base_extr_init_weight = 10;
+  camera_base_extr_std = 0.1;
 }
 
 void VioConfig::save(const std::string& filename) {
@@ -171,5 +178,12 @@ void serialize(Archive& ar, basalt::VioConfig& config) {
   ar(CEREAL_NVP(config.mapper_use_lm));
   ar(CEREAL_NVP(config.mapper_lm_lambda_min));
   ar(CEREAL_NVP(config.mapper_lm_lambda_max));
+
+  ar(CEREAL_NVP(config.camera_cmd_timeoffset));
+  ar(CEREAL_NVP(config.camera_cmd_timeoffset_init_weight));
+  ar(CEREAL_NVP(config.camera_cmd_timeoffset_std));
+
+  ar(CEREAL_NVP(config.camera_base_extr_init_weight));
+  ar(CEREAL_NVP(config.camera_base_extr_std));
 }
 }  // namespace cereal

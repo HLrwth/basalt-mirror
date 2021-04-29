@@ -48,8 +48,9 @@ namespace basalt {
 
 KeypointVioEstimator::KeypointVioEstimator(
     const Eigen::Vector3d& g, const basalt::Calibration<double>& calib,
-    const VioConfig& config)
-    : take_kf(true),
+    const VioConfig& config, bool use_vel)
+    : use_vel(use_vel),
+      take_kf(true),
       frames_after_kf(0),
       g(g),
       initialized(false),
@@ -63,8 +64,8 @@ KeypointVioEstimator::KeypointVioEstimator(
   this->calib = calib;
 
   // Setup marginalization
-  marg_H.setZero(POSE_VEL_BIAS_SIZE, POSE_VEL_BIAS_SIZE);
-  marg_b.setZero(POSE_VEL_BIAS_SIZE);
+  marg_H.setZero(POSE_VEL_BIAS_EXTR_SIZE, POSE_VEL_BIAS_EXTR_SIZE);
+  marg_b.setZero(POSE_VEL_BIAS_EXTR_SIZE);
 
   // prior on position
   marg_H.diagonal().head<3>().setConstant(config.vio_init_pose_weight);
@@ -75,10 +76,17 @@ KeypointVioEstimator::KeypointVioEstimator(
   marg_H.diagonal().segment<3>(9).array() = config.vio_init_ba_weight;
   marg_H.diagonal().segment<3>(12).array() = config.vio_init_bg_weight;
 
+  //TODO set priors weight
+  marg_H.diagonal().segment<6>(15).array() = config.camera_base_extr_init_weight;
+  marg_H.diagonal().tail<1>().array() = config.camera_cmd_timeoffset_init_weight;
+
   std::cout << "marg_H\n" << marg_H << std::endl;
 
   gyro_bias_weight = calib.gyro_bias_std.array().square().inverse();
   accel_bias_weight = calib.accel_bias_std.array().square().inverse();
+
+  camera_cmd_timeoffset_weight = 1. / (config.camera_cmd_timeoffset_std * config.camera_cmd_timeoffset_std);
+  camera_base_extr_weight = 1. / (config.camera_base_extr_std * config.camera_base_extr_std);
 
   max_states = config.vio_max_states;
   max_kfs = config.vio_max_kfs;
@@ -87,22 +95,25 @@ KeypointVioEstimator::KeypointVioEstimator(
 
   vision_data_queue.set_capacity(10);
   imu_data_queue.set_capacity(300);
+  velcmd_data_queue.set_capacity(10);
 }
 
 void KeypointVioEstimator::initialize(int64_t t_ns, const Sophus::SE3d& T_w_i,
                                       const Eigen::Vector3d& vel_w_i,
                                       const Eigen::Vector3d& bg,
-                                      const Eigen::Vector3d& ba) {
+                                      const Eigen::Vector3d& ba,
+                                      const Sophus::SE3d& T_o_i,
+                                      double t_extr_ms) {
   initialized = true;
   T_w_i_init = T_w_i;
 
   last_state_t_ns = t_ns;
   imu_meas[t_ns] = IntegratedImuMeasurement(t_ns, bg, ba);
   frame_states[t_ns] =
-      PoseVelBiasStateWithLin(t_ns, T_w_i, vel_w_i, bg, ba, true);
+      PoseVelBiasExtrStateWithLin(t_ns, T_w_i, vel_w_i, bg, ba, T_o_i, t_extr_ms, true);
 
-  marg_order.abs_order_map[t_ns] = std::make_pair(0, POSE_VEL_BIAS_SIZE);
-  marg_order.total_size = POSE_VEL_BIAS_SIZE;
+  marg_order.abs_order_map[t_ns] = std::make_pair(0, POSE_VEL_BIAS_EXTR_SIZE);
+  marg_order.total_size = POSE_VEL_BIAS_EXTR_SIZE;
   marg_order.items = 1;
 
   initialize(bg, ba);
@@ -123,6 +134,17 @@ void KeypointVioEstimator::initialize(const Eigen::Vector3d& bg,
     imu_data_queue.pop(data);
     data->accel = calib.calib_accel_bias.getCalibrated(data->accel);
     data->gyro = calib.calib_gyro_bias.getCalibrated(data->gyro);
+
+    /*****************VELCMD*****************/
+    VelocityInverseKinematics::Ptr kinematics;
+    Eigen::Vector3d prev_gyro;
+    VelCommand::Ptr velcmd_data;
+    VelCommand::Ptr pre_velcmd_data;
+    if(use_vel){
+      velcmd_data_queue.pop(velcmd_data);
+      pre_velcmd_data.reset(new VelCommand(*velcmd_data));
+    }
+
 
     while (true) {
       vision_data_queue.pop(curr_frame);
@@ -145,37 +167,66 @@ void KeypointVioEstimator::initialize(const Eigen::Vector3d& bg,
           if (!data.get()) break;
           data->accel = calib.calib_accel_bias.getCalibrated(data->accel);
           data->gyro = calib.calib_gyro_bias.getCalibrated(data->gyro);
+          prev_gyro = data->gyro;
           // std::cout << "Skipping IMU data.." << std::endl;
         }
+
+        /*****************VELCMD*****************/
+        //skip old data
+        if(pre_velcmd_data.get()){
+          while(velcmd_data->t_ns <= curr_frame->t_ns){
+            pre_velcmd_data.reset(new VelCommand(*velcmd_data));
+            velcmd_data_queue.pop(velcmd_data);
+            if(!velcmd_data.get()) break;
+          }
+        }
+
+        Sophus::SE3d T_o_i_init = calib.T_o_i;
+        double t_extr_s_init = config.camera_cmd_timeoffset;
+        // if(pre_velcmd_data.get()){
+        //   int64_t dt_ns = pre_velcmd_data->t_ns - curr_frame->t_ns;
+        //   t_extr_s_init = (dt_ns > 0)?(dt_ns * 1e-9):0.0;
+        // }
 
         Eigen::Vector3d vel_w_i_init;
         vel_w_i_init.setZero();
 
-        T_w_i_init.setQuaternion(Eigen::Quaterniond::FromTwoVectors(
-            data->accel, Eigen::Vector3d::UnitZ()));
+        if(calib.set_T_w_i_init){
+          T_w_i_init = calib.T_w_i_init;
+        }
+        else{//robot: z up, x forward, T265 imu: y up, z forward
+          T_w_i_init.setQuaternion(Eigen::Quaterniond::FromTwoVectors(
+              data->accel, Eigen::Vector3d::UnitZ()));
+          T_w_i_init.so3() = T_w_i_init.so3() * 
+                             Sophus::SO3d::exp(Eigen::Vector3d(0,M_PI_2,0));
+        }
 
         last_state_t_ns = curr_frame->t_ns;
         imu_meas[last_state_t_ns] =
             IntegratedImuMeasurement(last_state_t_ns, bg, ba);
-        frame_states[last_state_t_ns] = PoseVelBiasStateWithLin(
-            last_state_t_ns, T_w_i_init, vel_w_i_init, bg, ba, true);
+        frame_states[last_state_t_ns] = PoseVelBiasExtrStateWithLin(
+            last_state_t_ns, T_w_i_init, vel_w_i_init, bg, ba, T_o_i_init, t_extr_s_init, true);//first state is treated as linearized to add prior.
 
         marg_order.abs_order_map[last_state_t_ns] =
-            std::make_pair(0, POSE_VEL_BIAS_SIZE);
-        marg_order.total_size = POSE_VEL_BIAS_SIZE;
+            std::make_pair(0, POSE_VEL_BIAS_EXTR_SIZE);
+        marg_order.total_size = POSE_VEL_BIAS_EXTR_SIZE;
         marg_order.items = 1;
 
         std::cout << "Setting up filter: t_ns " << last_state_t_ns << std::endl;
-        std::cout << "T_w_i\n" << T_w_i_init.matrix() << std::endl;
+        std::cout << "T_w_i_trans " << T_w_i_init.translation().transpose() << std::endl;
+        std::cout << "T_w_i_quat " << T_w_i_init.unit_quaternion().coeffs().transpose() << std::endl;
         std::cout << "vel_w_i " << vel_w_i_init.transpose() << std::endl;
+        std::cout << "T_o_i_trans " << T_o_i_init.translation().transpose() << std::endl;
+        std::cout << "T_o_i_quat " <<T_o_i_init.unit_quaternion().coeffs().transpose() << std::endl;
+        std::cout << "t_extr_s " << t_extr_s_init << std::endl;
 
         initialized = true;
       }
 
       if (prev_frame) {
         // preintegrate measurements
-
         auto last_state = frame_states.at(last_state_t_ns);
+        Eigen::Vector3d curr_gyro;
 
         meas.reset(new IntegratedImuMeasurement(
             prev_frame->t_ns, last_state.getState().bias_gyro,
@@ -190,6 +241,7 @@ void KeypointVioEstimator::initialize(const Eigen::Vector3d& bg,
 
         while (data->t_ns <= curr_frame->t_ns) {
           meas->integrate(*data, accel_cov, gyro_cov);
+          curr_gyro = data->gyro;
           imu_data_queue.pop(data);
           if (!data.get()) break;
           data->accel = calib.calib_accel_bias.getCalibrated(data->accel);
@@ -201,17 +253,41 @@ void KeypointVioEstimator::initialize(const Eigen::Vector3d& bg,
           int64_t tmp = data->t_ns;
           data->t_ns = curr_frame->t_ns;
           meas->integrate(*data, accel_cov, gyro_cov);
+          curr_gyro = data->gyro;
           data->t_ns = tmp;
+        }
+
+        /*****************VELCMD*****************/
+        //BASALT_ASSERT(velcmd_data_queue.size()<2);
+        if(pre_velcmd_data.get()){
+          Eigen::Vector3d prev_gyro_corrected = prev_gyro - last_state.getState().bias_gyro;
+          Eigen::Vector3d curr_gyro_corrected = curr_gyro - last_state.getState().bias_gyro;
+          prev_gyro = curr_gyro;
+
+          kinematics.reset(new VelocityInverseKinematics(prev_frame->t_ns, prev_gyro_corrected,
+                                                         curr_frame->t_ns, curr_gyro_corrected,
+                                                         *pre_velcmd_data));
+
+          while(velcmd_data->t_ns < prev_frame->t_ns + meas->get_dt_ns()/2){
+            velcmd_data->linear_diff = std::abs(velcmd_data->linear - pre_velcmd_data->linear);
+            velcmd_data->angular_diff = std::abs(velcmd_data->angular - pre_velcmd_data->angular);
+            kinematics.reset(new VelocityInverseKinematics(prev_frame->t_ns, prev_gyro_corrected,
+                                                           curr_frame->t_ns, curr_gyro_corrected, 
+                                                           *velcmd_data));
+            pre_velcmd_data.reset(new VelCommand(*velcmd_data));
+            velcmd_data_queue.pop(velcmd_data);
+          }
         }
       }
 
-      measure(curr_frame, meas);
+      measure(curr_frame, meas, kinematics);
       prev_frame = curr_frame;
     }
 
     if (out_vis_queue) out_vis_queue->push(nullptr);
     if (out_marg_queue) out_marg_queue->push(nullptr);
     if (out_state_queue) out_state_queue->push(nullptr);
+    if (out_state_extr_queue) out_state_extr_queue->push(nullptr);
 
     finished = true;
 
@@ -231,14 +307,15 @@ void KeypointVioEstimator::addVisionToQueue(
 }
 
 bool KeypointVioEstimator::measure(const OpticalFlowResult::Ptr& opt_flow_meas,
-                                   const IntegratedImuMeasurement::Ptr& meas) {
-  if (meas.get()) { //after first frame
+                                   const IntegratedImuMeasurement::Ptr& meas,
+                                   const VelocityInverseKinematics::Ptr& kinematics) {
+  if (meas.get()) {
     BASALT_ASSERT(frame_states[last_state_t_ns].getState().t_ns ==
                   meas->get_start_t_ns());
     BASALT_ASSERT(opt_flow_meas->t_ns ==
                   meas->get_dt_ns() + meas->get_start_t_ns());
 
-    PoseVelBiasState next_state = frame_states.at(last_state_t_ns).getState();
+    PoseVelBiasExtrState next_state = frame_states.at(last_state_t_ns).getState();
 
     meas->predictState(frame_states.at(last_state_t_ns).getState(), g,
                        next_state);
@@ -246,9 +323,14 @@ bool KeypointVioEstimator::measure(const OpticalFlowResult::Ptr& opt_flow_meas,
     last_state_t_ns = opt_flow_meas->t_ns;
     next_state.t_ns = opt_flow_meas->t_ns;
 
-    frame_states[last_state_t_ns] = next_state;//prediction of cur_frame
+    frame_states[last_state_t_ns] = next_state;
 
     imu_meas[meas->get_start_t_ns()] = *meas;
+  }
+
+    /*****************VELCMD*****************/
+  if(kinematics.get()){//start and end frame added
+    kin_meas[kinematics->get_start_t_ns()] = *kinematics;
   }
 
   // save results
@@ -390,11 +472,17 @@ bool KeypointVioEstimator::measure(const OpticalFlowResult::Ptr& opt_flow_meas,
   marginalize(num_points_connected);
 
   if (out_state_queue) {
-    PoseVelBiasStateWithLin p = frame_states.at(last_state_t_ns);
+    PoseVelBiasExtrStateWithLin p = frame_states.at(last_state_t_ns);
 
     PoseVelBiasState::Ptr data(new PoseVelBiasState(p.getState()));
 
     out_state_queue->push(data);
+  }
+
+  if(out_state_extr_queue){
+    PoseVelBiasExtrStateWithLin p = frame_states.at(last_state_t_ns);
+    PoseVelBiasExtrState::Ptr data(new PoseVelBiasExtrState(p.getState()));
+    out_state_extr_queue->push(data);
   }
 
   if (out_vis_queue) {
@@ -459,34 +547,34 @@ void KeypointVioEstimator::marginalize(
       aom.items++;
     }
 
-    std::set<int64_t> states_to_marg_vel_bias;
+    std::set<int64_t> states_to_marg_vel_bias_extr;
     std::set<int64_t> states_to_marg_all;
     for (const auto& kv : frame_states) {
       if (kv.first > last_state_to_marg) break;
 
       if (kv.first != last_state_to_marg) {
         if (kf_ids.count(kv.first) > 0) {
-          states_to_marg_vel_bias.emplace(kv.first);
+          states_to_marg_vel_bias_extr.emplace(kv.first);
         } else {
           states_to_marg_all.emplace(kv.first);
         }
       }
 
       aom.abs_order_map[kv.first] =
-          std::make_pair(aom.total_size, POSE_VEL_BIAS_SIZE);
+          std::make_pair(aom.total_size, POSE_VEL_BIAS_EXTR_SIZE);
 
       // Check that we have the same order as marginalization
       if (aom.items < marg_order.abs_order_map.size())
         BASALT_ASSERT(marg_order.abs_order_map.at(kv.first) ==
                       aom.abs_order_map.at(kv.first));
 
-      aom.total_size += POSE_VEL_BIAS_SIZE;
+      aom.total_size += POSE_VEL_BIAS_EXTR_SIZE;
       aom.items++;
     }
 
     auto kf_ids_all = kf_ids;
     std::set<int64_t> kfs_to_marg;
-    while (kf_ids.size() > max_kfs && !states_to_marg_vel_bias.empty()) {
+    while (kf_ids.size() > max_kfs && !states_to_marg_vel_bias_extr.empty()) {
       int64_t id_to_marg = -1;
 
       {
@@ -558,7 +646,7 @@ void KeypointVioEstimator::marginalize(
       std::cout << "states_to_marg.size() " << states_to_marg_all.size()
                 << std::endl;
       std::cout << "state_to_marg_vel_bias.size() "
-                << states_to_marg_vel_bias.size() << std::endl;
+                << states_to_marg_vel_bias_extr.size() << std::endl;
       std::cout << "kfs_to_marg.size() " << kfs_to_marg.size() << std::endl;
     }
 
@@ -566,6 +654,7 @@ void KeypointVioEstimator::marginalize(
 
     double marg_prior_error;
     double imu_error, bg_error, ba_error;
+    double kin_error, extr_error, extr_dt_error;
 
     DenseAccumulator accum;
     accum.reset(asize);
@@ -609,6 +698,9 @@ void KeypointVioEstimator::marginalize(
     linearizeAbsIMU(aom, accum.getH(), accum.getB(), imu_error, bg_error,
                     ba_error, frame_states, imu_meas, gyro_bias_weight,
                     accel_bias_weight, g);
+    /*****************VELCMD*****************/
+    linearizeKinematics(aom, accum.getH(), accum.getB(),kin_error,extr_error,extr_dt_error,
+                        frame_states,kin_meas,camera_cmd_timeoffset_weight,camera_base_extr_weight);
     linearizeMargPrior(marg_order, marg_H, marg_b, aom, accum.getH(),
                        accum.getB(), marg_prior_error);
 
@@ -622,7 +714,7 @@ void KeypointVioEstimator::marginalize(
         m->abs_H = accum.getH();
         m->abs_b = accum.getB();
         m->frame_poses = frame_poses;
-        m->frame_states = frame_states;
+        m->frame_extr_states = frame_states;
         m->kfs_all = kf_ids_all;
         m->kfs_to_marg = kfs_to_marg;
         m->use_imu = true;
@@ -647,20 +739,20 @@ void KeypointVioEstimator::marginalize(
             idx_to_marg.emplace(start_idx + i);
         }
       } else {
-        BASALT_ASSERT(kv.second.second == POSE_VEL_BIAS_SIZE);
+        BASALT_ASSERT(kv.second.second == POSE_VEL_BIAS_EXTR_SIZE);
         // state
         int start_idx = kv.second.first;
         if (states_to_marg_all.count(kv.first) > 0) {
-          for (size_t i = 0; i < POSE_VEL_BIAS_SIZE; i++)
+          for (size_t i = 0; i < POSE_VEL_BIAS_EXTR_SIZE; i++)
             idx_to_marg.emplace(start_idx + i);
-        } else if (states_to_marg_vel_bias.count(kv.first) > 0) {
+        } else if (states_to_marg_vel_bias_extr.count(kv.first) > 0) {
           for (size_t i = 0; i < POSE_SIZE; i++)
             idx_to_keep.emplace(start_idx + i);
-          for (size_t i = POSE_SIZE; i < POSE_VEL_BIAS_SIZE; i++)
+          for (size_t i = POSE_SIZE; i < POSE_VEL_BIAS_EXTR_SIZE; i++)
             idx_to_marg.emplace(start_idx + i);
         } else {
           BASALT_ASSERT(kv.first == last_state_to_marg);
-          for (size_t i = 0; i < POSE_VEL_BIAS_SIZE; i++)
+          for (size_t i = 0; i < POSE_VEL_BIAS_EXTR_SIZE; i++)
             idx_to_keep.emplace(start_idx + i);
         }
       }
@@ -688,16 +780,18 @@ void KeypointVioEstimator::marginalize(
     for (const int64_t id : states_to_marg_all) {
       frame_states.erase(id);
       imu_meas.erase(id);
+      kin_meas.erase(id);
       prev_opt_flow_res.erase(id);
     }
 
-    for (const int64_t id : states_to_marg_vel_bias) {
-      const PoseVelBiasStateWithLin& state = frame_states.at(id);
+    for (const int64_t id : states_to_marg_vel_bias_extr) {
+      const PoseVelBiasExtrStateWithLin& state = frame_states.at(id);
       PoseStateWithLin pose(state);
 
       frame_poses[id] = pose;
       frame_states.erase(id);
       imu_meas.erase(id);
+      kin_meas.erase(id);
     }
 
     for (const int64_t id : poses_to_marg) {
@@ -719,8 +813,8 @@ void KeypointVioEstimator::marginalize(
 
     {
       marg_order_new.abs_order_map[last_state_to_marg] =
-          std::make_pair(marg_order_new.total_size, POSE_VEL_BIAS_SIZE);
-      marg_order_new.total_size += POSE_VEL_BIAS_SIZE;
+          std::make_pair(marg_order_new.total_size, POSE_VEL_BIAS_EXTR_SIZE);
+      marg_order_new.total_size += POSE_VEL_BIAS_EXTR_SIZE;
       marg_order_new.items++;
     }
 
@@ -771,14 +865,14 @@ void KeypointVioEstimator::optimize() {
 
     for (const auto& kv : frame_states) {
       aom.abs_order_map[kv.first] =
-          std::make_pair(aom.total_size, POSE_VEL_BIAS_SIZE);
+          std::make_pair(aom.total_size, POSE_VEL_BIAS_EXTR_SIZE);
 
       // Check that we have the same order as marginalization
       if (aom.items < marg_order.abs_order_map.size())
         BASALT_ASSERT(marg_order.abs_order_map.at(kv.first) ==
                       aom.abs_order_map.at(kv.first));
 
-      aom.total_size += POSE_VEL_BIAS_SIZE;
+      aom.total_size += POSE_VEL_BIAS_EXTR_SIZE;
       aom.items++;
     }
 
@@ -808,11 +902,17 @@ void KeypointVioEstimator::optimize() {
       linearizeAbsIMU(aom, lopt.accum.getH(), lopt.accum.getB(), imu_error,
                       bg_error, ba_error, frame_states, imu_meas,
                       gyro_bias_weight, accel_bias_weight, g);
+      /*****************VELCMD*****************/
+      double kin_error = 0; double extr_error = 0; double extr_dt_error = 0;
+      linearizeKinematics(aom,lopt.accum.getH(), lopt.accum.getB(),kin_error,extr_error,extr_dt_error,
+                          frame_states,kin_meas,camera_cmd_timeoffset_weight,camera_base_extr_weight);
+
       linearizeMargPrior(marg_order, marg_H, marg_b, aom, lopt.accum.getH(),
                          lopt.accum.getB(), marg_prior_error);
 
       double error_total =
-          rld_error + imu_error + marg_prior_error + ba_error + bg_error;
+          rld_error + imu_error + marg_prior_error + ba_error + bg_error + 
+          kin_error + extr_error + extr_dt_error;
 
       if (config.vio_debug)
         std::cout << "[LINEARIZE] Error: " << error_total << " num points "
@@ -847,7 +947,7 @@ void KeypointVioEstimator::optimize() {
           // apply increment to states
           for (auto& kv : frame_states) {
             int idx = aom.abs_order_map.at(kv.first).first;
-            kv.second.applyInc(-inc.segment<POSE_VEL_BIAS_SIZE>(idx));
+            kv.second.applyInc(-inc.segment<POSE_VEL_BIAS_EXTR_SIZE>(idx));
           }
 
           // Update points
@@ -868,12 +968,17 @@ void KeypointVioEstimator::optimize() {
           computeImuError(aom, after_update_imu_error, after_bg_error,
                           after_ba_error, frame_states, imu_meas,
                           gyro_bias_weight, accel_bias_weight, g);
+          /*****************VELCMD*****************/
+          double after_update_kin_error = 0, after_update_extr_error = 0, after_update_extr_dt_error = 0;
+          computeKinematicsError(aom, after_update_kin_error, after_update_extr_error, after_update_extr_dt_error, 
+                                frame_states, kin_meas, camera_cmd_timeoffset_weight, camera_base_extr_weight);
           computeMargPriorError(marg_order, marg_H, marg_b,
                                 after_update_marg_prior_error);
 
           double after_error_total =
               after_update_vision_error + after_update_imu_error +
-              after_update_marg_prior_error + after_bg_error + after_ba_error;
+              after_update_marg_prior_error + after_bg_error + after_ba_error + 
+              after_update_kin_error + after_update_extr_error + after_update_extr_dt_error;
 
           double f_diff = (error_total - after_error_total);
 
@@ -916,12 +1021,18 @@ void KeypointVioEstimator::optimize() {
         for (auto& kv : frame_poses) {
           int idx = aom.abs_order_map.at(kv.first).first;
           kv.second.applyInc(-inc.segment<POSE_SIZE>(idx));
+          // std::cout<<"H\n"<<lopt.accum.getH().block<9, 9>(idx, idx)<<std::endl;
+          // std::cout<<"B\n"<<lopt.accum.getB().segment<9>(idx)<<std::endl;
+          // std::cout<<"Pose Update 6: \n"<<-inc.segment<POSE_SIZE>(idx)<<std::endl;
         }
 
         // apply increment to states
         for (auto& kv : frame_states) {
           int idx = aom.abs_order_map.at(kv.first).first;
-          kv.second.applyInc(-inc.segment<POSE_VEL_BIAS_SIZE>(idx));
+          kv.second.applyInc(-inc.segment<POSE_VEL_BIAS_EXTR_SIZE>(idx));
+          // std::cout<<"H\n"<<lopt.accum.getH().block<22, 22>(idx, idx)<<std::endl;
+          // std::cout<<"B\n"<<lopt.accum.getB().segment<22>(idx)<<std::endl;
+          // std::cout<<"State Update 22: \n"<<-inc.segment<POSE_VEL_BIAS_EXTR_SIZE>(idx)<<std::endl;
         }
 
         // Update points
@@ -944,12 +1055,17 @@ void KeypointVioEstimator::optimize() {
         computeImuError(aom, after_update_imu_error, after_bg_error,
                         after_ba_error, frame_states, imu_meas,
                         gyro_bias_weight, accel_bias_weight, g);
+        /*****************VELCMD*****************/
+        double after_update_kin_error = 0, after_update_extr_error = 0, after_update_extr_dt_error = 0;
+        computeKinematicsError(aom, after_update_kin_error, after_update_extr_error, after_update_extr_dt_error, 
+                              frame_states, kin_meas, camera_cmd_timeoffset_weight, camera_base_extr_weight);
         computeMargPriorError(marg_order, marg_H, marg_b,
                               after_update_marg_prior_error);
 
         double after_error_total =
             after_update_vision_error + after_update_imu_error +
-            after_update_marg_prior_error + after_bg_error + after_ba_error;
+            after_update_marg_prior_error + after_bg_error + after_ba_error + 
+            after_update_kin_error + after_update_extr_error + after_update_extr_dt_error;
 
         double error_diff = error_total - after_error_total;
 
@@ -962,6 +1078,9 @@ void KeypointVioEstimator::optimize() {
                   << " before_update_error: vision: " << rld_error
                   << " imu: " << imu_error << " bg_error: " << bg_error
                   << " ba_error: " << ba_error
+                  << " kin error: " << kin_error
+                  << " extr error: "<< extr_error
+                  << " extr dt error: "<< extr_dt_error
                   << " marg_prior: " << marg_prior_error
                   << " total: " << error_total << std::endl;
 
@@ -970,11 +1089,17 @@ void KeypointVioEstimator::optimize() {
                   << " imu: " << after_update_imu_error
                   << " bg_error: " << after_bg_error
                   << " ba_error: " << after_ba_error
+                  << " kin error: " << after_update_kin_error
+                  << " extr error: "<< after_update_extr_error
+                  << " extr dt error: "<< after_update_extr_dt_error
                   << " marg prior: " << after_update_marg_prior_error
                   << " total: " << after_error_total << " error_diff "
                   << error_diff << " time : " << elapsed.count()
                   << "(us),  num_states " << frame_states.size()
                   << " num_poses " << frame_poses.size() << std::endl;
+
+        if(after_update_kin_error>10)
+          exit(1);
 
         if (after_error_total > error_total) {
           std::cout << "increased error after update!!!" << std::endl;

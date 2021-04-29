@@ -562,7 +562,7 @@ class SplineOptimization {
     }
 
     for (size_t i = 0; i < calib->intrinsics.size(); i++) {
-      calib->intrinsics[i].applyInc(inc_full.segment(
+      calib->intrinsics[i].applyInc(inc_full.segment(/*  */
           offset_cam_intrinsics[i], calib->intrinsics[i].getN()));
     }
 

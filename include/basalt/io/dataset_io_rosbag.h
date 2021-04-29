@@ -49,6 +49,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <geometry_msgs/PointStamped.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/TransformStamped.h>
+#include <geometry_msgs/TwistStamped.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/Imu.h>
 
@@ -72,6 +73,7 @@ class RosbagVioDataset : public VioDataset {
 
   Eigen::aligned_vector<AccelData> accel_data;
   Eigen::aligned_vector<GyroData> gyro_data;
+  std::vector<VelData> vel_data;
 
   std::vector<int64_t> gt_timestamps;  // ordered gt timestamps
   Eigen::aligned_vector<Sophus::SE3d>
@@ -86,6 +88,9 @@ class RosbagVioDataset : public VioDataset {
 
   std::vector<int64_t> &get_image_timestamps() { return image_timestamps; }
 
+  const std::vector<VelData> &get_vel_data() const{
+    return vel_data;
+  }
   const Eigen::aligned_vector<AccelData> &get_accel_data() const {
     return accel_data;
   }
@@ -160,7 +165,7 @@ class RosbagVioDataset : public VioDataset {
 
 class RosbagIO : public DatasetIoInterface {
  public:
-  RosbagIO() {}
+  RosbagIO(double start_time):start_time(start_time){}
 
   void read(const std::string &path) {
     if (!fs::exists(path))
@@ -171,7 +176,11 @@ class RosbagIO : public DatasetIoInterface {
     data->bag.reset(new rosbag::Bag);
     data->bag->open(path, rosbag::bagmode::Read);
 
-    rosbag::View view(*data->bag);
+    //start from s
+    rosbag::View full_view(*data->bag);
+    ros::Time initial_time = full_view.getBeginTime();
+    initial_time += ros::Duration(start_time);
+    rosbag::View view(*data->bag,initial_time);
 
     // get topics
     std::vector<const rosbag::ConnectionInfo *> connection_infos =
@@ -181,6 +190,7 @@ class RosbagIO : public DatasetIoInterface {
     std::string imu_topic;
     std::string mocap_topic;
     std::string point_topic;
+    std::string vel_topic;
 
     for (const rosbag::ConnectionInfo *info : connection_infos) {
       //      if (info->topic.substr(0, 4) == std::string("/cam")) {
@@ -203,6 +213,8 @@ class RosbagIO : public DatasetIoInterface {
         mocap_topic = info->topic;
       } else if (info->datatype == std::string("geometry_msgs/PointStamped")) {
         point_topic = info->topic;
+      } else if (info->datatype == std::string("geometry_msgs/TwistStamped")) {
+        vel_topic = info->topic;
       }
     }
 
@@ -252,6 +264,15 @@ class RosbagIO : public DatasetIoInterface {
 
         min_time = std::min(min_time, timestamp_ns);
         max_time = std::max(max_time, timestamp_ns);
+      }
+
+      if (vel_topic == topic) {
+        geometry_msgs::TwistStampedConstPtr vel_msg = m.instantiate< geometry_msgs::TwistStamped>();
+        int64_t time = vel_msg->header.stamp.toNSec();
+        data->vel_data.emplace_back();
+        data->vel_data.back().timestamp_ns = time;
+        data->vel_data.back().linear = vel_msg->twist.linear.x;
+        data->vel_data.back().angular = vel_msg->twist.angular.z;
       }
 
       if (imu_topic == topic) {
@@ -395,6 +416,7 @@ class RosbagIO : public DatasetIoInterface {
 
  private:
   std::shared_ptr<RosbagVioDataset> data;
+  double start_time;
 };
 
 }  // namespace basalt

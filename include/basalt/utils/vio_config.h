@@ -35,6 +35,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
 #include <string>
+#include <Eigen/Dense>
+#include <sophus/se3.hpp>
 
 namespace basalt {
 
@@ -94,5 +96,12 @@ struct VioConfig {
   bool mapper_use_lm;
   double mapper_lm_lambda_min;
   double mapper_lm_lambda_max;
+
+  double camera_cmd_timeoffset;
+  double camera_cmd_timeoffset_init_weight;
+  double camera_cmd_timeoffset_std;
+
+  double camera_base_extr_init_weight;
+  double camera_base_extr_std;
 };
 }  // namespace basalt

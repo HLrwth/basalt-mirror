@@ -152,7 +152,7 @@ void BundleAdjustmentBase::computeError(
 
         std::visit(
             [&](const auto& cam) {
-              for (size_t i = 0; i < obs_kv.second.size(); i++) {//loop over 2d obs in target 
+              for (size_t i = 0; i < obs_kv.second.size(); i++) {
                 const KeypointObservation& kpt_obs = obs_kv.second[i];
                 const KeypointPosition& kpt_pos =
                     lmdb.getLandmark(kpt_obs.kpt_id);
@@ -245,18 +245,18 @@ void BundleAdjustmentBase::linearizeHelper(
 
   tbb::parallel_for(
       tbb::blocked_range<size_t>(0, obs_tcid_vec.size()),
-      [&](const tbb::blocked_range<size_t>& range) {//range over host frames
+      [&](const tbb::blocked_range<size_t>& range) {
         for (size_t r = range.begin(); r != range.end(); ++r) {
-          auto kv = obs_to_lin.find(obs_tcid_vec[r]);  //iterator to obs of kf
+          auto kv = obs_to_lin.find(obs_tcid_vec[r]);
 
-          RelLinData& rld = rld_vec[r];  //vector of RelLinData
+          RelLinData& rld = rld_vec[r];
 
           rld.error = 0;
 
-          const TimeCamId& tcid_h = kv->first; //host id
+          const TimeCamId& tcid_h = kv->first;
 
           for (const auto& obs_kv : kv->second) {
-            const TimeCamId& tcid_t = obs_kv.first; //target id
+            const TimeCamId& tcid_t = obs_kv.first;
             if (tcid_h != tcid_t) {
               // target and host are not the same
               rld.order.emplace_back(std::make_pair(tcid_h, tcid_t));
@@ -433,8 +433,7 @@ void BundleAdjustmentBase::get_current_points(
 
     int64_t id = tcid_host.frame_id;
     if (frame_states.count(id) > 0) {
-      PoseVelBiasStateWithLin state = frame_states.at(id);
-      T_w_i = state.getState().T_w_i;
+      T_w_i = frame_states.at(id).getState().T_w_i;
     } else if (frame_poses.count(id) > 0) {
       PoseStateWithLin state = frame_poses.at(id);
 
@@ -581,9 +580,9 @@ void BundleAdjustmentBase::computeDelta(const AbsOrderMap& marg_order,
       BASALT_ASSERT(frame_poses.at(kv.first).isLinearized());
       delta.segment<POSE_SIZE>(kv.second.first) =
           frame_poses.at(kv.first).getDelta();
-    } else if (kv.second.second == POSE_VEL_BIAS_SIZE) {
+    } else if (kv.second.second == POSE_VEL_BIAS_EXTR_SIZE) {
       BASALT_ASSERT(frame_states.at(kv.first).isLinearized());
-      delta.segment<POSE_VEL_BIAS_SIZE>(kv.second.first) =
+      delta.segment<POSE_VEL_BIAS_EXTR_SIZE>(kv.second.first) =
           frame_states.at(kv.first).getDelta();
     } else {
       BASALT_ASSERT(false);
@@ -634,7 +633,7 @@ void BundleAdjustmentBase::computeMargPriorError(
 Eigen::VectorXd BundleAdjustmentBase::checkNullspace(
     const Eigen::MatrixXd& H, const Eigen::VectorXd& b,
     const AbsOrderMap& order,
-    const Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin>& frame_states,
+    const Eigen::aligned_map<int64_t, PoseVelBiasExtrStateWithLin>& frame_states,
     const Eigen::aligned_map<int64_t, PoseStateWithLin>& frame_poses) {
   BASALT_ASSERT(size_t(H.cols()) == order.total_size);
   size_t marg_size = order.total_size;
@@ -657,7 +656,7 @@ Eigen::VectorXd BundleAdjustmentBase::checkNullspace(
     if (kv.second.second == POSE_SIZE) {
       mean_trans += frame_poses.at(kv.first).getPoseLin().translation();
       num_trans++;
-    } else if (kv.second.second == POSE_VEL_BIAS_SIZE) {
+    } else if (kv.second.second == POSE_VEL_BIAS_EXTR_SIZE) {
       mean_trans += frame_states.at(kv.first).getStateLin().T_w_i.translation();
       num_trans++;
     } else {
@@ -682,7 +681,7 @@ Eigen::VectorXd BundleAdjustmentBase::checkNullspace(
     Eigen::Vector3d trans;
     if (kv.second.second == POSE_SIZE) {
       trans = frame_poses.at(kv.first).getPoseLin().translation();
-    } else if (kv.second.second == POSE_VEL_BIAS_SIZE) {
+    } else if (kv.second.second == POSE_VEL_BIAS_EXTR_SIZE) {
       trans = frame_states.at(kv.first).getStateLin().T_w_i.translation();
     } else {
       BASALT_ASSERT(false);
@@ -697,7 +696,7 @@ Eigen::VectorXd BundleAdjustmentBase::checkNullspace(
     inc_pitch.segment<3>(kv.second.first) = J.col(1);
     inc_yaw.segment<3>(kv.second.first) = J.col(2);
 
-    if (kv.second.second == POSE_VEL_BIAS_SIZE) {
+    if (kv.second.second == POSE_VEL_BIAS_EXTR_SIZE) {
       Eigen::Vector3d vel = frame_states.at(kv.first).getStateLin().vel_w_i;
       Eigen::Matrix3d J_vel = -Sophus::SO3d::hat(vel);
       J_vel *= eps;

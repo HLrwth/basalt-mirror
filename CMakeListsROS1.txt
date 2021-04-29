@@ -208,22 +208,27 @@ set(CMAKE_CXX_FLAGS "${BASALT_CXX_FLAGS} -march=${CXX_MARCH} ${BASALT_PASSED_CXX
 
 set(EIGEN_INCLUDE_DIR_HINTS ${EIGEN_ROOT})
 find_package(Eigen3 3.3.7 EXACT REQUIRED MODULE)
-
-#string(REPLACE "\"" "" CLEAN_EIGEN ${EIGEN3_INCLUDE_DIR})
-#set(EXT_INCLUDE_DIRS ${EXT_INCLUDE_DIRS} ${CLEAN_EIGEN})
-set(EXT_INCLUDE_DIRS ${EXT_INCLUDE_DIRS} ${EIGEN3_INCLUDE_DIR})
-
+include_directories(${EIGEN3_INCLUDE_DIR})
+message(STATUS "Found Eigen headers in: ${EIGEN3_INCLUDE_DIR}")
 if(NOT EIGEN3_INCLUDE_DIR MATCHES "^${EIGEN_ROOT}")
   message(WARNING "Found Eigen headers are outside of specified EIGEN_ROOT '${EIGEN_ROOT}'")
 endif()
 
 find_package(TBB REQUIRED)
-set(EXT_INCLUDE_DIRS ${EXT_INCLUDE_DIRS} ${TBB_INCLUDE_DIR})
+include_directories(${TBB_INCLUDE_DIR})
+message(STATUS "TBB_INTERFACE_VERSION: ${TBB_INTERFACE_VERSION}")
+if (TBB_INTERFACE_VERSION LESS 11004)
+  # enable global_control header for earlier TBB versions (Ubuntu 16.04, 18.04)
+  add_definitions(-DTBB_PREVIEW_GLOBAL_CONTROL)
+endif()
 
 find_package(OpenCV REQUIRED core imgproc calib3d highgui)
-set(EXT_INCLUDE_DIRS "${EXT_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIR}")
+include_directories(${OpenCV_INCLUDE_DIR})
+message(STATUS "Found OpenCV headers in: ${OpenCV_INCLUDE_DIR}")
+message(STATUS "Found OpenCV_LIBS: ${OpenCV_LIBS}")
 
-find_package(realsense2 QUIET)
+find_package(realsense2 REQUIRED)
+include_directories(${realsense2_INCLUDE_DIR})
 
 add_subdirectory(thirdparty)
 
@@ -235,7 +240,7 @@ set(ALL_INCLUDE_DIRS ${ALL_INCLUDE_DIRS} "thirdparty/CLI11/include")
 
 if(realsense2_FOUND)
    catkin_package(
-      INCLUDE_DIRS ${ALL_INCLUDE_DIRS} ${EIGEN3_INCLUDE_DIR}
+      INCLUDE_DIRS ${ALL_INCLUDE_DIRS} ${EIGEN3_INCLUDE_DIR} ${realsense2_INCLUDE_DIR}
       LIBRARIES basalt basalt_rs_t265)
 else()
    catkin_package(
@@ -261,7 +266,9 @@ add_library(basalt SHARED
   src/vi_estimator/ba_base.cpp
   src/vi_estimator/nfr_mapper.cpp
   src/vi_estimator/landmark_database.cpp
-  src/utils/keypoints.cpp)
+  src/utils/keypoints.cpp
+  src/dynamics/kinematics_linearizer.cpp
+  src/dynamics/velocity_kinematics.cpp)
 
 
 target_link_libraries(basalt PUBLIC ${TBB_LIBRARIES} ${STD_CXX_FS} ${OpenCV_LIBS} PRIVATE rosbag apriltag opengv)
@@ -274,18 +281,17 @@ add_executable(basalt_calibrate_imu src/calibrate_imu.cpp src/calibration/cam_im
 target_link_libraries(basalt_calibrate_imu basalt pangolin)
 
 
-add_executable(basalt_vio_sim src/vio_sim.cpp)
-target_link_libraries(basalt_vio_sim basalt pangolin)
+#add_executable(basalt_vio_sim src/vio_sim.cpp)
+#target_link_libraries(basalt_vio_sim basalt pangolin)
 
-add_executable(basalt_mapper_sim src/mapper_sim.cpp)
-target_link_libraries(basalt_mapper_sim basalt pangolin)
+#add_executable(basalt_mapper_sim src/mapper_sim.cpp)
+#target_link_libraries(basalt_mapper_sim basalt pangolin)
 
-add_executable(basalt_mapper_sim_naive src/mapper_sim_naive.cpp)
-target_link_libraries(basalt_mapper_sim_naive basalt pangolin)
+#add_executable(basalt_mapper_sim_naive src/mapper_sim_naive.cpp)
+#target_link_libraries(basalt_mapper_sim_naive basalt pangolin)
 
 add_executable(basalt_mapper src/mapper.cpp)
 target_link_libraries(basalt_mapper basalt pangolin)
-
 
 add_executable(basalt_opt_flow src/opt_flow.cpp)
 target_link_libraries(basalt_opt_flow basalt pangolin)
@@ -342,7 +348,8 @@ install(FILES
   DESTINATION ${CONFIG_INSTALL_DIR}
 )
 
-set(ALL_INSTALL_TARGETS basalt_calibrate basalt_calibrate_imu basalt_vio_sim basalt_mapper_sim basalt_mapper_sim_naive basalt_mapper basalt_opt_flow basalt_vio basalt_kitti_eval basalt_time_alignment basalt)
+#set(ALL_INSTALL_TARGETS basalt_calibrate basalt_calibrate_imu basalt_vio_sim basalt_mapper_sim basalt_mapper_sim_naive basalt_mapper basalt_opt_flow basalt_vio basalt_kitti_eval basalt_time_alignment basalt)
+set(ALL_INSTALL_TARGETS basalt_calibrate basalt_calibrate_imu  basalt_mapper basalt_opt_flow basalt_vio basalt_kitti_eval basalt_time_alignment basalt)
 
 if(realsense2_FOUND)
   set(ALL_INSTALL_TARGETS ${ALL_INSTALL_TARGETS} basalt_rs_t265)
@@ -395,9 +402,9 @@ install(
 macro(install)
 endmacro()
 # Include subproject (or any other CMake code) with "disabled" install().
-enable_testing()
-add_subdirectory(thirdparty/basalt-headers/test)
-add_subdirectory(test)
+#enable_testing()
+#add_subdirectory(thirdparty/basalt-headers/test)
+#add_subdirectory(test)
 # Restore original install() behavior.
 macro(install)
   _install(${ARGN})

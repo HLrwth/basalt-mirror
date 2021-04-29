@@ -133,13 +133,115 @@ struct PoseVelBiasStateWithLin {
   }
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
- private:
+private:
   bool linearized;
   VecN delta;
   PoseVelBiasState state_linearized, state_current;
 
   VecN backup_delta;
   PoseVelBiasState backup_state_linearized, backup_state_current;
+
+  friend class cereal::access;
+
+  template <class Archive>
+  void serialize(Archive& ar) {
+    ar(state_linearized.T_w_i);
+    ar(state_linearized.vel_w_i);
+    ar(state_linearized.bias_gyro);
+    ar(state_linearized.bias_accel);
+    ar(state_current.T_w_i);
+    ar(state_current.vel_w_i);
+    ar(state_current.bias_gyro);
+    ar(state_current.bias_accel);
+    ar(delta);
+    ar(linearized);
+    ar(state_linearized.t_ns);
+  }
+};
+
+struct PoseVelBiasExtrStateWithLin {
+  using VecN = PoseVelBiasExtrState::VecN;
+
+  PoseVelBiasExtrStateWithLin() {
+    linearized = false;
+    delta.setZero();
+  };
+
+  PoseVelBiasExtrStateWithLin(int64_t t_ns, const Sophus::SE3d& T_w_i,
+                              const Eigen::Vector3d& vel_w_i,
+                              const Eigen::Vector3d& bias_gyro,
+                              const Eigen::Vector3d& bias_accel, 
+                              const Sophus::SE3d& T_o_i, double t_extr_ms, bool linearized)
+    :linearized(linearized),state_linearized(t_ns, T_w_i, vel_w_i, bias_gyro, bias_accel, T_o_i, t_extr_ms) {
+    delta.setZero();
+    state_current = state_linearized; //overwirte base class member
+  }
+
+  PoseVelBiasExtrStateWithLin(const PoseVelBiasExtrState& other)
+    : linearized(false),state_linearized(other) {
+    delta.setZero();
+    state_current = other;
+  }
+  
+  void setLinFalse() {
+    linearized = false;
+    delta.setZero();
+  }
+
+  void setLinTrue() {
+    linearized = true;
+    BASALT_ASSERT(delta.isApproxToConstant(0));
+    state_current = state_linearized;
+  }
+
+  void applyInc(const VecN& inc) {
+    if (!linearized) {
+      state_linearized.applyInc(inc);
+    } else {
+      delta += inc;
+      state_current = state_linearized;
+      state_current.applyInc(delta);
+    }
+  }
+
+  inline const PoseVelBiasExtrState& getState() const {
+    if (!linearized) {
+      return state_linearized;
+    } else {
+      return state_current;
+    }
+  }
+
+  inline const PoseVelBiasExtrState& getStateLin() const {
+    return state_linearized;
+  }
+
+  inline bool isLinearized() const { return linearized; }
+  inline const VecN& getDelta() const { return delta; }
+  inline int64_t getT_ns() const { return state_linearized.t_ns; }
+
+  friend struct PoseStateWithLin;
+
+  inline void backup() {
+    backup_delta = delta;
+    backup_state_linearized = state_linearized;
+    backup_state_current = state_current;
+  }
+
+  inline void restore() {
+    delta = backup_delta;
+    state_linearized = backup_state_linearized;
+    state_current = backup_state_current;
+  }
+
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+ private:
+  bool linearized;
+  VecN delta;
+  PoseVelBiasExtrState state_linearized, state_current;
+
+  VecN backup_delta;
+  PoseVelBiasExtrState backup_state_linearized, backup_state_current;
 
   friend class cereal::access;
 
@@ -175,6 +277,15 @@ struct PoseStateWithLin {
   }
 
   PoseStateWithLin(const PoseVelBiasStateWithLin& other)
+      : linearized(other.linearized),
+        delta(other.delta.head<6>()),
+        pose_linearized(other.state_linearized.t_ns,
+                        other.state_linearized.T_w_i) {
+    T_w_i_current = pose_linearized.T_w_i;
+    PoseState::incPose(delta, T_w_i_current);
+  }
+
+  PoseStateWithLin(const PoseVelBiasExtrStateWithLin& other)
       : linearized(other.linearized),
         delta(other.delta.head<6>()),
         pose_linearized(other.state_linearized.t_ns,
@@ -271,6 +382,7 @@ struct MargData {
   Eigen::MatrixXd abs_H;
   Eigen::VectorXd abs_b;
   Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin> frame_states;
+  Eigen::aligned_map<int64_t, PoseVelBiasExtrStateWithLin> frame_extr_states;
   Eigen::aligned_map<int64_t, PoseStateWithLin> frame_poses;
   std::set<int64_t> kfs_all;
   std::set<int64_t> kfs_to_marg;

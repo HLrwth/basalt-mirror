@@ -82,10 +82,14 @@ KeypointVoEstimator::KeypointVoEstimator(
 void KeypointVoEstimator::initialize(int64_t t_ns, const Sophus::SE3d& T_w_i,
                                      const Eigen::Vector3d& vel_w_i,
                                      const Eigen::Vector3d& bg,
-                                     const Eigen::Vector3d& ba) {
+                                     const Eigen::Vector3d& ba,
+                                     const Sophus::SE3d& T_o_i, 
+                                     double t_extr_ms) {
   UNUSED(vel_w_i);
   UNUSED(bg);
   UNUSED(ba);
+  UNUSED(T_o_i);
+  UNUSED(t_extr_ms);
 
   initialized = true;
   T_w_i_init = T_w_i;
@@ -128,6 +132,10 @@ void KeypointVoEstimator::initialize(const Eigen::Vector3d& bg,
 
       if (!initialized) {
         Eigen::Vector3d vel_w_i_init;
+
+        if(calib.set_T_w_i_init){
+          T_w_i_init = calib.T_w_i_init;
+        }
 
         last_state_t_ns = curr_frame->t_ns;
 
@@ -533,7 +541,7 @@ void KeypointVoEstimator::marginalize(
           m->abs_H = accum.getH();
           m->abs_b = accum.getB();
           m->frame_poses = frame_poses;
-          m->frame_states = frame_states;
+          //m->frame_states = frame_states;
           m->kfs_all = kf_ids_all;
           m->kfs_to_marg = kfs_to_marg;
           m->use_imu = false;
@@ -767,10 +775,10 @@ void KeypointVoEstimator::optimize() {
         }
 
         // apply increment to states
-        for (auto& kv : frame_states) {
-          int idx = aom.abs_order_map.at(kv.first).first;
-          kv.second.applyInc(-inc.segment<POSE_VEL_BIAS_SIZE>(idx));
-        }
+        // for (auto& kv : frame_states) {
+        //   int idx = aom.abs_order_map.at(kv.first).first;
+        //   kv.second.applyInc(-inc.segment<POSE_VEL_BIAS_SIZE>(idx));
+        // }
 
         // Update points
         tbb::blocked_range<size_t> keys_range(0, rld_vec.size());

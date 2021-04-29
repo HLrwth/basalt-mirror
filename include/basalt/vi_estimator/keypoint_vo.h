@@ -66,9 +66,13 @@ class KeypointVoEstimator : public VioEstimatorBase,
   KeypointVoEstimator(const basalt::Calibration<double>& calib,
                       const VioConfig& config);
 
+  // void initialize(int64_t t_ns, const Sophus::SE3d& T_w_i,
+  //                 const Eigen::Vector3d& vel_w_i, const Eigen::Vector3d& bg,
+  //                 const Eigen::Vector3d& ba);
+
   void initialize(int64_t t_ns, const Sophus::SE3d& T_w_i,
-                  const Eigen::Vector3d& vel_w_i, const Eigen::Vector3d& bg,
-                  const Eigen::Vector3d& ba);
+                const Eigen::Vector3d& vel_w_i, const Eigen::Vector3d& bg,
+                const Eigen::Vector3d& ba, const Sophus::SE3d& T_o_i, double t_extr_ms);
 
   void initialize(const Eigen::Vector3d& bg, const Eigen::Vector3d& ba);
 
@@ -98,25 +102,25 @@ class KeypointVoEstimator : public VioEstimatorBase,
     return frame_states.at(last_state_t_ns).getState().vel_w_i;
   }
 
-  const PoseVelBiasState& get_state() const {
-    return frame_states.at(last_state_t_ns).getState();
-  }
-  PoseVelBiasState get_state(int64_t t_ns) const {
-    PoseVelBiasState state;
+  // const PoseVelBiasState& get_state() const {
+  //   return frame_states.at(last_state_t_ns).getState();
+  // }
+  // PoseVelBiasState get_state(int64_t t_ns) const {
+  //   PoseVelBiasState state;
 
-    auto it = frame_states.find(t_ns);
+  //   auto it = frame_states.find(t_ns);
 
-    if (it != frame_states.end()) {
-      return it->second.getState();
-    }
+  //   if (it != frame_states.end()) {
+  //     return it->second.getState();
+  //   }
 
-    auto it2 = frame_poses.find(t_ns);
-    if (it2 != frame_poses.end()) {
-      state.T_w_i = it2->second.getPose();
-    }
+  //   auto it2 = frame_poses.find(t_ns);
+  //   if (it2 != frame_poses.end()) {
+  //     state.T_w_i = it2->second.getPose();
+  //   }
 
-    return state;
-  }
+  //   return state;
+  // }
   // const MatNN get_cov() const { return cov.bottomRightCorner<N, N>(); }
 
   void computeProjections(

@@ -38,6 +38,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <basalt/optical_flow/optical_flow.h>
 #include <basalt/utils/imu_types.h>
+#include <basalt/dynamics/vel_command.h>
 
 namespace basalt {
 
@@ -69,6 +70,7 @@ class VioEstimatorBase {
         out_vis_queue(nullptr) {
     vision_data_queue.set_capacity(10);
     imu_data_queue.set_capacity(300);
+    velcmd_data_queue.set_capacity(5);
     last_processed_t_ns = 0;
     finished = false;
   }
@@ -78,17 +80,26 @@ class VioEstimatorBase {
 
   tbb::concurrent_bounded_queue<OpticalFlowResult::Ptr> vision_data_queue;
   tbb::concurrent_bounded_queue<ImuData::Ptr> imu_data_queue;
+  tbb::concurrent_bounded_queue<VelCommand::Ptr> velcmd_data_queue;
 
   tbb::concurrent_bounded_queue<PoseVelBiasState::Ptr>* out_state_queue =
       nullptr;
+  tbb::concurrent_bounded_queue<PoseVelBiasExtrState::Ptr>* out_state_extr_queue =
+    nullptr;
   tbb::concurrent_bounded_queue<MargData::Ptr>* out_marg_queue = nullptr;
   tbb::concurrent_bounded_queue<VioVisualizationData::Ptr>* out_vis_queue =
       nullptr;
 
+  // virtual void initialize(int64_t t_ns, const Sophus::SE3d& T_w_i,
+  //                         const Eigen::Vector3d& vel_w_i,
+  //                         const Eigen::Vector3d& bg,
+  //                         const Eigen::Vector3d& ba) = 0;
+
   virtual void initialize(int64_t t_ns, const Sophus::SE3d& T_w_i,
-                          const Eigen::Vector3d& vel_w_i,
-                          const Eigen::Vector3d& bg,
-                          const Eigen::Vector3d& ba) = 0;
+                        const Eigen::Vector3d& vel_w_i,
+                        const Eigen::Vector3d& bg,
+                        const Eigen::Vector3d& ba,
+                        const Sophus::SE3d& T_o_i, double t_extr_ms) = 0;
 
   virtual void initialize(const Eigen::Vector3d& bg,
                           const Eigen::Vector3d& ba) = 0;
@@ -101,7 +112,8 @@ class VioEstimatorFactory {
   static VioEstimatorBase::Ptr getVioEstimator(const VioConfig& config,
                                                const Calibration<double>& cam,
                                                const Eigen::Vector3d& g,
-                                               bool use_imu);
+                                               bool use_imu,
+                                               bool use_vel=false);
 };
 
 double alignSVD(const std::vector<int64_t>& filter_t_ns,

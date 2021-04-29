@@ -254,11 +254,17 @@ class BundleAdjustmentBase {
                              const Eigen::VectorXd& marg_b,
                              double& marg_prior_error) const;
 
+  // static Eigen::VectorXd checkNullspace(
+  //     const Eigen::MatrixXd& marg_H, const Eigen::VectorXd& marg_b,
+  //     const AbsOrderMap& marg_order,
+  //     const Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin>& frame_states,
+  //     const Eigen::aligned_map<int64_t, PoseStateWithLin>& frame_poses);
+
   static Eigen::VectorXd checkNullspace(
-      const Eigen::MatrixXd& marg_H, const Eigen::VectorXd& marg_b,
-      const AbsOrderMap& marg_order,
-      const Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin>& frame_states,
-      const Eigen::aligned_map<int64_t, PoseStateWithLin>& frame_poses);
+  const Eigen::MatrixXd& marg_H, const Eigen::VectorXd& marg_b,
+  const AbsOrderMap& marg_order,
+  const Eigen::aligned_map<int64_t, PoseVelBiasExtrStateWithLin>& frame_states,
+  const Eigen::aligned_map<int64_t, PoseStateWithLin>& frame_poses);
 
   /// Triangulates the point and returns homogenous representation. First 3
   /// components - unit-length direction vector. Last component inverse
@@ -417,7 +423,8 @@ class BundleAdjustmentBase {
     return PoseStateWithLin(it2->second);
   }
 
-  Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin> frame_states;
+  // Eigen::aligned_map<int64_t, PoseVelBiasStateWithLin> frame_states;
+  Eigen::aligned_map<int64_t, PoseVelBiasExtrStateWithLin> frame_states;
   Eigen::aligned_map<int64_t, PoseStateWithLin> frame_poses;
 
   // Point management

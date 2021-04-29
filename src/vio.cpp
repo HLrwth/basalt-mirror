@@ -63,6 +63,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <basalt/utils/vis_utils.h>
 
+#include <basalt/dynamics/vel_command.h>
+
 // GUI functions
 void draw_image_overlay(pangolin::View& v, size_t cam_id);
 void draw_scene(pangolin::View& view);
@@ -93,6 +95,9 @@ pangolin::Var<bool> show_est_vel("ui.show_est_vel", false, false, true);
 pangolin::Var<bool> show_est_bg("ui.show_est_bg", false, false, true);
 pangolin::Var<bool> show_est_ba("ui.show_est_ba", false, false, true);
 
+pangolin::Var<bool> show_est_extr("ui.show_est_extr", false, false, true);
+pangolin::Var<bool> show_est_dt_extr("ui.show_est_dt_extr", false, false, true);
+
 pangolin::Var<bool> show_gt("ui.show_gt", true, false, true);
 
 Button next_step_btn("ui.next_step", &next_step);
@@ -118,7 +123,8 @@ pangolin::OpenGlRenderState camera;
 std::unordered_map<int64_t, basalt::VioVisualizationData::Ptr> vis_map;
 
 tbb::concurrent_bounded_queue<basalt::VioVisualizationData::Ptr> out_vis_queue;
-tbb::concurrent_bounded_queue<basalt::PoseVelBiasState::Ptr> out_state_queue;
+//tbb::concurrent_bounded_queue<basalt::PoseVelBiasState::Ptr> out_state_queue;
+tbb::concurrent_bounded_queue<basalt::PoseVelBiasExtrState::Ptr> out_state_extr_queue;
 
 std::vector<int64_t> vio_t_ns;
 Eigen::aligned_vector<Eigen::Vector3d> vio_t_w_i;
@@ -170,6 +176,19 @@ void feed_images() {
   std::cout << "Finished input_data thread " << std::endl;
 }
 
+void feed_vel() {
+  for(size_t i = 0; i < vio_dataset->get_vel_data().size(); i++){
+    basalt::VelCommand::Ptr data(new basalt::VelCommand);
+    data->t_ns = vio_dataset->get_vel_data()[i].timestamp_ns;
+    data->linear = vio_dataset->get_vel_data()[i].linear;
+    data->angular = vio_dataset->get_vel_data()[i].angular;
+
+    vio->velcmd_data_queue.push(data);
+  }
+  vio->velcmd_data_queue.push(nullptr);
+}
+
+
 void feed_imu() {
   for (size_t i = 0; i < vio_dataset->get_gyro_data().size(); i++) {
     basalt::ImuData::Ptr data(new basalt::ImuData);
@@ -195,6 +214,8 @@ int main(int argc, char** argv) {
   std::string trajectory_fmt;
   int num_threads = 0;
   bool use_imu = true;
+  bool use_vel = false;
+  double start_time = 0.0;
 
   CLI::App app{"App description"};
 
@@ -221,6 +242,8 @@ int main(int argc, char** argv) {
   app.add_option("--save-trajectory", trajectory_fmt,
                  "Save trajectory. Supported formats <tum, euroc, kitti>");
   app.add_option("--use-imu", use_imu, "Use IMU.");
+  app.add_option("--use-vel", use_vel, "Use velocity command.");
+  app.add_option("--start-time",start_time, "Start time of dataset.");
 
   // global thread limit is in effect until global_control object is destroyed
   std::unique_ptr<tbb::global_control> tbb_global_control;
@@ -254,7 +277,7 @@ int main(int argc, char** argv) {
 
   {
     basalt::DatasetIoInterfacePtr dataset_io =
-        basalt::DatasetIoFactory::getDatasetIo(dataset_type);
+        basalt::DatasetIoFactory::getDatasetIo(dataset_type,false,start_time);
 
     dataset_io->read(dataset_path);
 
@@ -275,12 +298,12 @@ int main(int argc, char** argv) {
   const int64_t start_t_ns = vio_dataset->get_image_timestamps().front();
   {
     vio = basalt::VioEstimatorFactory::getVioEstimator(
-        vio_config, calib, basalt::constants::g, use_imu);
+        vio_config, calib, basalt::constants::g, use_imu, use_vel);
     vio->initialize(Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
 
     opt_flow_ptr->output_queue = &vio->vision_data_queue;
     if (show_gui) vio->out_vis_queue = &out_vis_queue;
-    vio->out_state_queue = &out_state_queue;
+    vio->out_state_extr_queue = &out_state_extr_queue;
   }
 
   basalt::MargDataSaver::Ptr marg_data_saver;
@@ -307,6 +330,11 @@ int main(int argc, char** argv) {
 
   std::thread t1(&feed_images);
   std::thread t2(&feed_imu);
+  std::shared_ptr<std::thread> t_vel;
+  if(use_vel){
+    std::cout<<"Using velocity command contraint!"<<std::endl;
+    t_vel.reset(new std::thread(&feed_vel));
+  }
 
   std::shared_ptr<std::thread> t3;
 
@@ -328,10 +356,10 @@ int main(int argc, char** argv) {
     }));
 
   std::thread t4([&]() {
-    basalt::PoseVelBiasState::Ptr data;
+    basalt::PoseVelBiasExtrState::Ptr data;
 
     while (true) {
-      out_state_queue.pop(data);
+      out_state_extr_queue.pop(data);
 
       if (!data.get()) break;
 
@@ -342,6 +370,9 @@ int main(int argc, char** argv) {
       Eigen::Vector3d vel_w_i = data->vel_w_i;
       Eigen::Vector3d bg = data->bias_gyro;
       Eigen::Vector3d ba = data->bias_accel;
+
+      Sophus::SE3d T_o_i = data->T_o_i;
+      double dt_extr = data->dt_extr;
 
       vio_t_ns.emplace_back(data->t_ns);
       vio_t_w_i.emplace_back(T_w_i.translation());
@@ -355,6 +386,9 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 3; i++) vals.push_back(T_w_i.translation()[i]);
         for (int i = 0; i < 3; i++) vals.push_back(bg[i]);
         for (int i = 0; i < 3; i++) vals.push_back(ba[i]);
+
+        for (int i = 0; i < 3; i++) vals.push_back(T_o_i.translation()[i]);
+        vals.push_back(dt_extr);
 
         vio_data_log.Log(vals);
       }
@@ -371,8 +405,8 @@ int main(int argc, char** argv) {
         std::cout << "opt_flow_ptr->input_queue "
                   << opt_flow_ptr->input_queue.size()
                   << " opt_flow_ptr->output_queue "
-                  << opt_flow_ptr->output_queue->size() << " out_state_queue "
-                  << out_state_queue.size() << std::endl;
+                  << opt_flow_ptr->output_queue->size() << " out_state_extr_queue "
+                  << out_state_extr_queue.size() << std::endl;
         std::this_thread::sleep_for(std::chrono::seconds(1));
       }
     }));
@@ -482,7 +516,8 @@ int main(int argc, char** argv) {
       }
 
       if (show_est_vel.GuiChanged() || show_est_pos.GuiChanged() ||
-          show_est_ba.GuiChanged() || show_est_bg.GuiChanged()) {
+          show_est_ba.GuiChanged() || show_est_bg.GuiChanged() ||
+          show_est_extr.GuiChanged() || show_est_dt_extr.GuiChanged()) {
         draw_plots();
       }
 
@@ -538,6 +573,7 @@ int main(int argc, char** argv) {
 
   t1.join();
   t2.join();
+  if (t_vel.get()) t_vel->join();
   if (t3.get()) t3->join();
   t4.join();
   if (t5.get()) t5->join();
@@ -794,6 +830,21 @@ void draw_plots() {
                        &vio_data_log);
     plotter->AddSeries("$0", "$12", pangolin::DrawingModeLine,
                        pangolin::Colour::Blue(), "accel bias z", &vio_data_log);
+  }
+
+  if(show_est_extr){
+    plotter->AddSeries("$0", "$13", pangolin::DrawingModeLine,
+                       pangolin::Colour::Red(), "extr position x", &vio_data_log);
+    plotter->AddSeries("$0", "$14", pangolin::DrawingModeLine,
+                       pangolin::Colour::Green(), "extr position y", &vio_data_log);
+    plotter->AddSeries("$0", "$15", pangolin::DrawingModeLine,
+                       pangolin::Colour::Blue(), "extr position z", &vio_data_log);
+  }
+
+  if(show_est_dt_extr){
+    pangolin::Colour Cyan(0,1,1);
+    plotter->AddSeries("$0", "$16", pangolin::DrawingModeLine,
+                    Cyan, "time offset to cmd", &vio_data_log);
   }
 
   double t = vio_dataset->get_image_timestamps()[show_frame] * 1e-9;

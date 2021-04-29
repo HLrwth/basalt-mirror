@@ -42,11 +42,11 @@ namespace basalt {
 
 VioEstimatorBase::Ptr VioEstimatorFactory::getVioEstimator(
     const VioConfig& config, const Calibration<double>& cam,
-    const Eigen::Vector3d& g, bool use_imu) {
+    const Eigen::Vector3d& g, bool use_imu, bool use_vel) {
   VioEstimatorBase::Ptr res;
 
   if (use_imu) {
-    res.reset(new KeypointVioEstimator(g, cam, config));
+    res.reset(new KeypointVioEstimator(g, cam, config,use_vel));
   } else {
     res.reset(new KeypointVoEstimator(cam, config));
   }

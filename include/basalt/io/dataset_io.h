@@ -78,6 +78,12 @@ struct Observations {
   std::vector<int> id;
 };
 
+struct VelData{
+  int64_t timestamp_ns;
+  double linear;
+  double angular;
+};
+
 struct GyroData {
   int64_t timestamp_ns;
   Eigen::Vector3d data;
@@ -117,7 +123,7 @@ class VioDataset {
   virtual size_t get_num_cams() const = 0;
 
   virtual std::vector<int64_t> &get_image_timestamps() = 0;
-
+  virtual const std::vector<VelData> &get_vel_data() const = 0;
   virtual const Eigen::aligned_vector<AccelData> &get_accel_data() const = 0;
   virtual const Eigen::aligned_vector<GyroData> &get_gyro_data() const = 0;
   virtual const std::vector<int64_t> &get_gt_timestamps() const = 0;
@@ -145,7 +151,7 @@ typedef std::shared_ptr<DatasetIoInterface> DatasetIoInterfacePtr;
 class DatasetIoFactory {
  public:
   static DatasetIoInterfacePtr getDatasetIo(const std::string &dataset_type,
-                                            bool load_mocap_as_gt = false);
+                                            bool load_mocap_as_gt = false, double start_time = 0.0);
 };
 
 }  // namespace basalt

@@ -58,6 +58,7 @@ class UzhVioDataset : public VioDataset {
 
   Eigen::aligned_vector<AccelData> accel_data;
   Eigen::aligned_vector<GyroData> gyro_data;
+  std::vector<VelData> vel_data;
 
   std::vector<int64_t> gt_timestamps;  // ordered gt timestamps
   Eigen::aligned_vector<Sophus::SE3d>
@@ -73,7 +74,9 @@ class UzhVioDataset : public VioDataset {
   size_t get_num_cams() const { return num_cams; }
 
   std::vector<int64_t> &get_image_timestamps() { return image_timestamps; }
-
+  const std::vector<VelData> &get_vel_data() const{
+    return vel_data;
+  }
   const Eigen::aligned_vector<AccelData> &get_accel_data() const {
     return accel_data;
   }
@@ -168,6 +171,9 @@ class UzhIO : public DatasetIoInterface {
               << " timestamps, " << data->left_image_path.size()
               << " left images and " << data->right_image_path.size()
               << std::endl;
+    
+    if(data->right_image_path.size()==0)
+      data->num_cams = 1;
 
     //    {
     //      int64_t t_ns = data->get_image_timestamps()[0];
