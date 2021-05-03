@@ -216,6 +216,7 @@ int main(int argc, char** argv) {
   bool use_imu = true;
   bool use_vel = false;
   double start_time = 0.0;
+  double end_time = 0.0;
 
   CLI::App app{"App description"};
 
@@ -243,13 +244,15 @@ int main(int argc, char** argv) {
                  "Save trajectory. Supported formats <tum, euroc, kitti>");
   app.add_option("--use-imu", use_imu, "Use IMU.");
   app.add_option("--use-vel", use_vel, "Use velocity command.");
-  app.add_option("--start-time",start_time, "Start time of dataset.");
+  app.add_option("--start-time",start_time, "Start time offset of dataset.");
+  app.add_option("--end-time",end_time, "End time offset of dataset.");
 
   // global thread limit is in effect until global_control object is destroyed
   std::unique_ptr<tbb::global_control> tbb_global_control;
   if (num_threads > 0) {
     tbb_global_control = std::make_unique<tbb::global_control>(
         tbb::global_control::max_allowed_parallelism, num_threads);
+    std::cout<<"Global thread number: "<<num_threads<<std::endl;
   }
 
   try {
@@ -277,7 +280,7 @@ int main(int argc, char** argv) {
 
   {
     basalt::DatasetIoInterfacePtr dataset_io =
-        basalt::DatasetIoFactory::getDatasetIo(dataset_type,false,start_time);
+        basalt::DatasetIoFactory::getDatasetIo(dataset_type, false, start_time, end_time);
 
     dataset_io->read(dataset_path);
 

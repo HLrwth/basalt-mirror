@@ -165,7 +165,7 @@ class RosbagVioDataset : public VioDataset {
 
 class RosbagIO : public DatasetIoInterface {
  public:
-  RosbagIO(double start_time):start_time(start_time){}
+  RosbagIO(double start_time = 0.0, double end_time = 0.0):start_time(start_time), end_time(end_time){}
 
   void read(const std::string &path) {
     if (!fs::exists(path))
@@ -180,7 +180,10 @@ class RosbagIO : public DatasetIoInterface {
     rosbag::View full_view(*data->bag);
     ros::Time initial_time = full_view.getBeginTime();
     initial_time += ros::Duration(start_time);
-    rosbag::View view(*data->bag,initial_time);
+
+    ros::Time stop_time = full_view.getEndTime();
+    stop_time -= ros::Duration(end_time);
+    rosbag::View view(*data->bag, initial_time, stop_time);
 
     // get topics
     std::vector<const rosbag::ConnectionInfo *> connection_infos =
@@ -417,6 +420,7 @@ class RosbagIO : public DatasetIoInterface {
  private:
   std::shared_ptr<RosbagVioDataset> data;
   double start_time;
+  double end_time;
 };
 
 }  // namespace basalt
